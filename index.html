@@ -3,52 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Diary (Clean)</title>
+    <title>AI Diary Safety</title>
+    
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            document.body.innerHTML = '<div style="color:#f87171; background:#1e293b; padding:20px; font-family:sans-serif;"><h3>⚠️ 読み込みエラー</h3><p>' + msg + '</p><p>Line: ' + line + '</p></div>';
+            return false;
+        };
+    </script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    
     <style>
-        /* キャッシュ切れ確認用に背景色を変更（少し明るいネイビー） */
-        body { background-color: #1e293b; color: #f1f5f9; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background-color: #0f172a; color: #f1f5f9; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { display: none; }
         .active-press:active { transform: scale(0.95); opacity: 0.8; }
     </style>
 </head>
 <body>
     <div id="root"></div>
+
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        
-        // ★強制設定：ここをいじれば絶対変わる
-        const FORCE_MODEL = "gemini-1.5-flash-001"; 
 
         const App = () => {
             const [activeTab, setActiveTab] = useState("chat");
             const [apiKey, setApiKey] = useState(localStorage.getItem("gemini_api_key") || "");
+            const [showSettings, setShowSettings] = useState(false);
             const [messages, setMessages] = useState([]);
             const [diaries, setDiaries] = useState([]);
             const [inputText, setInputText] = useState("");
             const [isLoading, setIsLoading] = useState(false);
             const [selectedImage, setSelectedImage] = useState(null);
             const [selectedImageBase64, setSelectedImageBase64] = useState(null);
+            
             const messagesEndRef = useRef(null);
             const fileInputRef = useRef(null);
 
+            // 初期化
             useEffect(() => {
-                const savedMsgs = localStorage.getItem("ai_diary_messages");
-                if (savedMsgs) setMessages(JSON.parse(savedMsgs));
-                const savedDiaries = localStorage.getItem("ai_diary_entries");
-                if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
-                if (!savedMsgs) {
-                    setMessages([{ id: 1, text: "こんにちは！\n過去の設定を全て無視して、強制的に正しいモデルで起動しました。", sender: "ai", timestamp: new Date().toISOString() }]);
+                try {
+                    const savedMsgs = localStorage.getItem("ai_diary_messages");
+                    if (savedMsgs) setMessages(JSON.parse(savedMsgs));
+                    const savedDiaries = localStorage.getItem("ai_diary_entries");
+                    if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
+
+                    if (!savedMsgs) {
+                        setMessages([{ id: 1, text: "こんにちは！\n安全装置付きのバージョンで起動しました。\nこれなら真っ白にはならないはずです。", sender: "ai", timestamp: new Date().toISOString() }]);
+                    }
+                } catch (e) {
+                    alert("データ読み込みエラー: " + e.message);
                 }
             }, []);
 
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); if (activeTab === 'chat') scrollToBottom(); }, [messages, activeTab]);
+            // アイコン更新
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+                if (activeTab === 'chat') scrollToBottom();
+            }, [messages, activeTab, showSettings, isLoading]);
+
+            // 保存
             useEffect(() => { localStorage.setItem("ai_diary_messages", JSON.stringify(messages)); }, [messages]);
             useEffect(() => { localStorage.setItem("ai_diary_entries", JSON.stringify(diaries)); }, [diaries]);
+
             const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); };
 
             const handleImageSelect = (e) => {
@@ -61,16 +82,21 @@
                 reader.readAsDataURL(file);
             };
 
+            // Raw Fetch (v1beta + gemini-1.5-flash-001 固定)
             const sendToGeminiRaw = async (text, imageBase64) => {
                 const cleanKey = apiKey.trim();
-                // ★v1に変更し、モデル名を強制指定
-                const url = `https://generativelanguage.googleapis.com/v1/models/${FORCE_MODEL}:generateContent?key=${cleanKey}`;
+                // 一番実績のあるエンドポイントとモデル名を使用
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=${cleanKey}`;
                 
                 let contents = imageBase64 ? 
                     [{ parts: [{ text: text }, { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }] }] : 
                     [{ parts: [{ text: text }] }];
                 
-                const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: contents }) });
+                const response = await fetch(url, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ contents: contents }) 
+                });
                 
                 if (!response.ok) { 
                     const d = await response.json(); 
@@ -82,13 +108,15 @@
 
             const handleSend = async () => {
                 if ((!inputText.trim() && !selectedImage) || isLoading) return;
-                if (!apiKey) { alert("設定からAPIキーを入れてください"); return; }
+                if (!apiKey) { setShowSettings(true); return; }
+
                 const newUserMsg = { id: Date.now(), text: inputText, image: selectedImage, sender: "user", timestamp: new Date().toISOString() };
                 const currentHistory = [...messages, newUserMsg];
                 setMessages(currentHistory);
                 setInputText("");
                 setSelectedImage(null);
                 setIsLoading(true);
+
                 try {
                     const history = currentHistory.slice(-6).map(m => `${m.sender}: ${m.text}`).join("\n");
                     const aiResponse = await sendToGeminiRaw(`あなたは親しい友人です。短く返して。\n${history}`, selectedImageBase64);
@@ -96,11 +124,14 @@
                     setSelectedImageBase64(null);
                 } catch (error) {
                     setMessages(prev => [...prev, { id: Date.now() + 1, text: `❌ エラー: ${error.message}`, sender: "ai", timestamp: new Date().toISOString() }]);
-                } finally { setIsLoading(false); }
+                } finally {
+                    setIsLoading(false);
+                }
             };
 
+            // 日記生成
             const generateDailySummary = async () => {
-                if (!apiKey) { alert("APIキーがありません"); return; }
+                if (!apiKey) { setShowSettings(true); return; }
                 if(!confirm("日記を作成しますか？")) return;
                 setIsLoading(true);
                 try {
@@ -114,41 +145,39 @@
                 } catch (e) { alert("失敗: " + e.message); } finally { setIsLoading(false); }
             };
 
-            // 設定画面（APIキーのみ）
-            const SettingsModal = () => (
-                <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setShowSettings(false)}>
-                    <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-                        <h2 className="text-lg font-bold mb-4 text-white">設定</h2>
-                        <label className="text-xs text-slate-400">API Key</label>
-                        <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mb-4" />
-                        <div className="text-xs text-teal-400 mb-4">※モデルは自動で {FORCE_MODEL} に固定されます</div>
-                        <button onClick={() => { localStorage.setItem("gemini_api_key", apiKey); setShowSettings(false); }} className="w-full bg-teal-600 text-white py-3 rounded-lg font-bold">保存</button>
-                    </div>
-                </div>
-            );
-
-            const CalendarView = () => <div className="p-10 text-center text-slate-500">カレンダー</div>;
-            const JournalView = () => <div className="p-4 pb-20 overflow-y-auto h-full"><h2 className="text-xl font-bold mb-4">日記</h2>{diaries.map(d=><div key={d.id} className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4"><h3 className="font-bold">{d.title}</h3><p className="text-sm text-slate-300">{d.summary}</p></div>)}</div>;
-
             return (
                 <div className="h-screen flex flex-col bg-slate-900 overflow-hidden">
-                    {showSettings && <SettingsModal />}
+                    {/* 設定モーダル */}
+                    {showSettings && (
+                        <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setShowSettings(false)}>
+                            <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+                                <h2 className="text-lg font-bold mb-4 text-white">設定</h2>
+                                <label className="text-xs text-slate-400">API Key</label>
+                                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mb-4" placeholder="AIza..." />
+                                <div className="text-xs text-teal-400 mb-4">※モデルは自動で gemini-1.5-flash-001 に固定されます</div>
+                                <button onClick={() => { localStorage.setItem("gemini_api_key", apiKey); setShowSettings(false); }} className="w-full bg-teal-600 text-white py-3 rounded-lg font-bold">保存して閉じる</button>
+                            </div>
+                        </div>
+                    )}
+
                     <header className="px-4 py-3 bg-slate-900 border-b border-slate-800 flex justify-between items-center z-10">
-                        <h1 className="font-bold text-sm text-teal-400">AI Diary (Clean)</h1>
+                        <h1 className="font-bold text-sm text-teal-400">AI Diary (Safety)</h1>
                         <button onClick={() => setShowSettings(true)} className="p-2 text-slate-400"><i data-lucide="settings" className="w-4 h-4"></i></button>
                     </header>
+
                     <main className="flex-1 overflow-y-auto bg-slate-900 relative">
                         {activeTab === "chat" && (
                             <div className="min-h-full pb-20 flex flex-col">
                                 <div className="flex-1 p-4 space-y-4">
                                     {messages.map((msg) => (
                                         <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                            <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${msg.sender === 'user' ? 'bg-teal-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
-                                                {msg.image && <img src={msg.image} className="rounded-lg mb-2 max-h-40" />}{msg.text}
+                                            <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${msg.sender === 'user' ? 'bg-teal-600 text-white' : 'bg-slate-800 text-slate-200 border border-slate-700'}`}>
+                                                {msg.image && <img src={msg.image} className="rounded-lg mb-2 max-h-40" />}
+                                                {msg.text}
                                             </div>
                                         </div>
                                     ))}
-                                    {isLoading && <div className="p-4 text-xs text-slate-500">送信中...</div>}
+                                    {isLoading && <div className="p-4 text-xs text-slate-500">...</div>}
                                     <div ref={messagesEndRef} />
                                 </div>
                                 <div className="p-3 bg-slate-900 border-t border-slate-800 sticky bottom-0">
@@ -162,9 +191,15 @@
                                 </div>
                             </div>
                         )}
-                        {activeTab === "calendar" && <CalendarView />}
-                        {activeTab === "journal" && <JournalView />}
+                        {activeTab === "calendar" && <div className="p-10 text-center text-slate-500">カレンダー</div>}
+                        {activeTab === "journal" && (
+                            <div className="p-4 pb-20 overflow-y-auto h-full">
+                                <h2 className="text-xl font-bold mb-4">日記</h2>
+                                {diaries.map(d=><div key={d.id} className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4"><h3 className="font-bold">{d.title}</h3><p className="text-sm text-slate-300">{d.summary}</p></div>)}
+                            </div>
+                        )}
                     </main>
+
                     <nav className="bg-slate-900 border-t border-slate-800 pb-10 h-16 flex justify-around items-center z-20">
                         <button onClick={() => setActiveTab("chat")} className="flex flex-col items-center w-16 text-teal-400"><i data-lucide="message-circle" className="w-6 h-6"></i></button>
                         <button onClick={() => setActiveTab("calendar")} className="flex flex-col items-center w-16 text-slate-500"><i data-lucide="calendar" className="w-6 h-6"></i></button>
