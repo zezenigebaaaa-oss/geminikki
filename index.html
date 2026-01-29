@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Partner Diary Final</title>
+    <title>AI Partner Diary</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -36,6 +36,15 @@
         import { GoogleGenerativeAI } from "@google/generative-ai";
         const { useState, useEffect, useRef } = React;
 
+        // ★修正点: 試行するモデル名のリスト
+        const MODEL_CANDIDATES = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-001",
+            "gemini-1.5-pro",
+            "gemini-1.0-pro",
+            "gemini-pro"
+        ];
+
         const App = () => {
             const [activeTab, setActiveTab] = useState("chat");
             const [apiKey, setApiKey] = useState(localStorage.getItem("gemini_api_key") || "");
@@ -58,12 +67,11 @@
 
                 if (!savedMsgs) {
                     setMessages([{
-                        id: 1, text: "こんにちは！これで確実に直ったはずです。\nGemini Proモデルに切り替えました！", sender: "ai", timestamp: new Date().toISOString()
+                        id: 1, text: "こんにちは！\nもしエラーが出ても、自動で別の回路を探すように進化しました！", sender: "ai", timestamp: new Date().toISOString()
                     }]);
                 }
             }, []);
 
-            // アイコン再描画
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
                 if (activeTab === 'chat') scrollToBottom();
@@ -74,6 +82,40 @@
 
             const scrollToBottom = () => {
                 messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+
+            // ★修正点: 総当たりでAPIを呼ぶ関数
+            const callGeminiWithFallback = async (apiKey, prompt, imageBase64 = null) => {
+                const cleanKey = apiKey.trim();
+                const genAI = new GoogleGenerativeAI(cleanKey);
+                let lastError = null;
+
+                // リストにあるモデルを順番に試す
+                for (const modelName of MODEL_CANDIDATES) {
+                    try {
+                        console.log(`Trying model: ${modelName}`);
+                        const model = genAI.getGenerativeModel({ model: modelName });
+                        let result;
+                        
+                        if (imageBase64) {
+                            result = await model.generateContent([prompt, { inlineData: { data: imageBase64, mimeType: "image/jpeg" } }]);
+                        } else {
+                            result = await model.generateContent(prompt);
+                        }
+                        
+                        // 成功したら結果を返す
+                        return (await result.response).text();
+                    } catch (e) {
+                        console.warn(`Model ${modelName} failed:`, e);
+                        lastError = e;
+                        // 404(Not Found)なら次のモデルへ。それ以外(APIキー間違い等)ならループ終了
+                        if (!e.message.includes("404") && !e.message.includes("not found")) {
+                             throw e;
+                        }
+                    }
+                }
+                // 全部ダメだった場合
+                throw new Error("全モデル接続失敗: " + lastError?.message);
             };
 
             const handleImageSelect = (e) => {
@@ -105,36 +147,15 @@
                 setIsLoading(true);
 
                 try {
-                    const cleanKey = apiKey.trim();
-                    const genAI = new GoogleGenerativeAI(cleanKey);
-                    
-                    // 【修正】最も安定している "gemini-pro" を使用
-                    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-
                     const historyText = currentHistory.slice(-6).map(m => 
                         `${m.sender === 'user' ? '私' : 'AIパートナー'}: ${m.text || '(画像送信)'}`
                     ).join("\n");
 
                     const prompt = `あなたは親しみやすいAIパートナーです。以下の会話履歴を踏まえて、共感したり質問したりして会話を広げてください。3行以内で返して。絵文字も使って。\n\n履歴:\n${historyText}`;
 
-                    let result;
-                    if (selectedImageBase64) {
-                        // gemini-pro-vision は画像対応だが、gemini-pro はテキストのみの場合があるため
-                        // 安全策として画像がある場合は gemini-1.5-flash を試す（画像はFlashの方が得意）
-                        // だがエラー回避を優先し、一旦テキストのみで応答させるか、モデルを切り替える
-                        // ここでは、画像がある場合のみ 1.5-flash を試すハイブリッド構成にします
-                        try {
-                             const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-                             result = await visionModel.generateContent([prompt, { inlineData: { data: selectedImageBase64, mimeType: "image/jpeg" } }]);
-                        } catch(e) {
-                             // 画像でコケたらテキストだけでProに投げる
-                             result = await model.generateContent(prompt + "\n(ユーザーから画像が送られましたが読み込めませんでした)");
-                        }
-                    } else {
-                        result = await model.generateContent(prompt);
-                    }
+                    // ★ここで自動修復呼び出し
+                    const aiResponse = await callGeminiWithFallback(apiKey, prompt, selectedImageBase64);
 
-                    const aiResponse = (await result.response).text();
                     setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
                     setSelectedImageBase64(null);
                 } catch (error) {
@@ -151,11 +172,6 @@
 
                 setIsLoading(true);
                 try {
-                    const cleanKey = apiKey.trim();
-                    const genAI = new GoogleGenerativeAI(cleanKey);
-                    // 【修正】ここも "gemini-pro" に統一
-                    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-                    
                     const todayStr = new Date().toDateString();
                     const todaysMsgs = messages.filter(m => new Date(m.timestamp).toDateString() === todayStr);
                     if(todaysMsgs.length === 0) throw new Error("今日の会話がありません");
@@ -163,8 +179,10 @@
                     const conversation = todaysMsgs.map(m => `${m.sender}: ${m.text}`).join("\n");
                     const prompt = `以下の会話ログから日記を作成してください。JSON形式のみで出力してください。Markdownは不要。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\nログ:\n${conversation}`;
 
-                    const result = await model.generateContent(prompt);
-                    const text = (await result.response).text().replace(/```json|```/g, "").trim();
+                    // ★ここでも自動修復呼び出し
+                    const rawText = await callGeminiWithFallback(apiKey, prompt);
+                    
+                    const text = rawText.replace(/```json|```/g, "").trim();
                     const data = JSON.parse(text);
 
                     setDiaries(prev => [{ id: Date.now(), date: new Date().toISOString(), ...data }, ...prev]);
