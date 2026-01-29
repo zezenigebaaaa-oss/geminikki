@@ -2,8 +2,8 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AI Partner Diary Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Partner Diary</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -19,23 +19,14 @@
         body { 
             background-color: #0f172a; 
             color: #f1f5f9; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             -webkit-tap-highlight-color: transparent;
             overscroll-behavior: none;
         }
-        /* スクロールバー非表示 */
         ::-webkit-scrollbar { display: none; }
-        
-        /* iPhoneのセーフエリア対応 */
-        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-        .pt-safe { padding-top: env(safe-area-inset-top); }
-
-        /* アニメーション */
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
-        /* ボタンエフェクト */
-        .active-press:active { transform: scale(0.95); opacity: 0.8; transition: transform 0.1s; }
+        .active-press:active { transform: scale(0.95); opacity: 0.8; }
     </style>
 </head>
 <body>
@@ -46,7 +37,6 @@
         const { useState, useEffect, useRef } = React;
 
         const App = () => {
-            // --- ステート管理 ---
             const [activeTab, setActiveTab] = useState("chat");
             const [apiKey, setApiKey] = useState(localStorage.getItem("gemini_api_key") || "");
             const [showSettings, setShowSettings] = useState(false);
@@ -60,11 +50,9 @@
             const messagesEndRef = useRef(null);
             const fileInputRef = useRef(null);
 
-            // --- 初期化 & データロード ---
             useEffect(() => {
                 const savedMsgs = localStorage.getItem("ai_diary_messages");
                 if (savedMsgs) setMessages(JSON.parse(savedMsgs));
-                
                 const savedDiaries = localStorage.getItem("ai_diary_entries");
                 if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
 
@@ -75,14 +63,12 @@
                 }
             }, []);
 
-            // --- 【重要】アイコン再描画の修正 ---
-            // タブ切り替え、設定画面開閉、ロード状態変化時にアイコンを更新
+            // --- ここがバグ修正ポイント ---
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
                 if (activeTab === 'chat') scrollToBottom();
-            }, [activeTab, showSettings, isLoading, messages]);
+            }, [messages, activeTab, showSettings, isLoading]);
 
-            // データ保存
             useEffect(() => { localStorage.setItem("ai_diary_messages", JSON.stringify(messages)); }, [messages]);
             useEffect(() => { localStorage.setItem("ai_diary_entries", JSON.stringify(diaries)); }, [diaries]);
 
@@ -90,7 +76,6 @@
                 messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
             };
 
-            // --- AI機能 ---
             const handleImageSelect = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -137,14 +122,10 @@
                     }
 
                     const aiResponse = (await result.response).text();
-                    setMessages(prev => [...prev, {
-                        id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString()
-                    }]);
+                    setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
                     setSelectedImageBase64(null);
                 } catch (error) {
-                    setMessages(prev => [...prev, {
-                        id: Date.now() + 1, text: "エラーが発生しました。APIキーを確認してください。", sender: "ai", timestamp: new Date().toISOString()
-                    }]);
+                    setMessages(prev => [...prev, { id: Date.now() + 1, text: "エラー: キーを確認してください", sender: "ai", timestamp: new Date().toISOString() }]);
                 } finally {
                     setIsLoading(false);
                 }
@@ -161,29 +142,24 @@
                     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
                     const todayStr = new Date().toDateString();
                     const todaysMsgs = messages.filter(m => new Date(m.timestamp).toDateString() === todayStr);
-                    
                     if(todaysMsgs.length === 0) throw new Error("今日の会話がありません");
-
+                    
                     const conversation = todaysMsgs.map(m => `${m.sender}: ${m.text}`).join("\n");
-
-                    const prompt = `以下の会話ログから日記を作成してください。JSON形式のみで出力してください。Markdownの記法は不要です。\n{"title":"タイトル","summary":"要約文","tags":["タグ"],"weather":"sunny"}\n\n会話ログ:\n${conversation}`;
+                    const prompt = `会話ログから日記を作って。JSONのみ出力。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\nログ:\n${conversation}`;
 
                     const result = await model.generateContent(prompt);
                     const text = (await result.response).text().replace(/```json|```/g, "").trim();
                     const data = JSON.parse(text);
 
-                    const newDiary = { id: Date.now(), date: new Date().toISOString(), ...data };
-                    setDiaries(prev => [newDiary, ...prev]);
+                    setDiaries(prev => [{ id: Date.now(), date: new Date().toISOString(), ...data }, ...prev]);
                     setActiveTab("journal");
                     alert("日記を作成しました！🎉");
                 } catch (error) {
-                    alert("作成に失敗しました: " + error.message);
+                    alert("作成失敗: " + error.message);
                 } finally {
                     setIsLoading(false);
                 }
             };
-
-            // --- UIコンポーネント ---
 
             const CalendarView = () => {
                 const today = new Date();
@@ -191,10 +167,7 @@
                 const getDaysInMonth = (date) => {
                     const year = date.getFullYear();
                     const month = date.getMonth();
-                    return {
-                        days: new Date(year, month + 1, 0).getDate(),
-                        firstDay: new Date(year, month, 1).getDay()
-                    };
+                    return { days: new Date(year, month + 1, 0).getDate(), firstDay: new Date(year, month, 1).getDay() };
                 };
                 const { days, firstDay } = getDaysInMonth(currentMonth);
                 const daysArray = [...Array(firstDay).fill(null), ...Array(days).fill(null).map((_, i) => i + 1)];
@@ -205,8 +178,8 @@
                 };
 
                 return (
-                    <div className="p-4 fade-in h-full flex flex-col pt-safe">
-                        <div className="flex justify-between items-center mb-6 mt-2">
+                    <div className="p-4 fade-in h-full flex flex-col">
+                        <div className="flex justify-between items-center mb-6">
                             <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 bg-slate-800 rounded-full active-press"><i data-lucide="chevron-left"></i></button>
                             <h2 className="text-xl font-bold">{currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月</h2>
                             <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 bg-slate-800 rounded-full active-press"><i data-lucide="chevron-right"></i></button>
@@ -231,8 +204,8 @@
             };
 
             const JournalView = () => (
-                <div className="p-4 fade-in pb-20 overflow-y-auto h-full pt-safe">
-                    <h2 className="text-xl font-bold mb-6 mt-2">日記アーカイブ</h2>
+                <div className="p-4 fade-in pb-20 overflow-y-auto h-full">
+                    <h2 className="text-xl font-bold mb-6">日記アーカイブ</h2>
                     {diaries.length === 0 ? <p className="text-center py-20 text-slate-600">記録はまだありません</p> : (
                         <div className="space-y-4">
                             {diaries.map(d => (
@@ -253,10 +226,8 @@
                 </div>
             );
 
-            // --- メインレンダリング ---
             return (
                 <div className="h-screen flex flex-col bg-slate-900 overflow-hidden">
-                    {/* 設定モーダル */}
                     {showSettings && (
                         <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setShowSettings(false)}>
                             <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-sm border border-slate-700" onClick={e => e.stopPropagation()}>
@@ -267,8 +238,7 @@
                         </div>
                     )}
 
-                    {/* ヘッダー */}
-                    <header className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex justify-between items-center z-10 pt-safe">
+                    <header className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex justify-between items-center z-10">
                         <div className="flex items-center gap-2">
                             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-400 to-blue-500 flex items-center justify-center"><i data-lucide="bot" className="text-slate-900 w-5 h-5"></i></div>
                             <h1 className="font-bold text-sm">AI Partner</h1>
@@ -276,25 +246,23 @@
                         <button onClick={() => setShowSettings(true)} className="p-2 bg-slate-800 rounded-full text-slate-400 active-press"><i data-lucide="settings" className="w-4 h-4"></i></button>
                     </header>
 
-                    {/* メインエリア */}
                     <main className="flex-1 overflow-y-auto bg-slate-900 relative">
                         {activeTab === "chat" && (
                             <div className="min-h-full pb-20 flex flex-col">
                                 <div className="flex-1 p-4 space-y-4">
                                     {messages.map((msg) => (
                                         <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                            <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.sender === 'user' ? 'bg-teal-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'}`}>
+                                            <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.sender === 'user' ? 'bg-teal-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'}`}>
                                                 {msg.image && <img src={msg.image} className="rounded-lg mb-2 max-h-40 object-cover" />}
                                                 {msg.text}
                                             </div>
                                         </div>
                                     ))}
-                                    {isLoading && <div className="p-4 text-xs text-slate-500 animate-pulse">AIが入力中...</div>}
+                                    {isLoading && <div className="p-4 text-xs text-slate-500 animate-pulse">AI入力中...</div>}
                                     <div ref={messagesEndRef} />
                                 </div>
                                 
-                                {/* 入力エリア */}
-                                <div className="p-3 bg-slate-900/95 border-t border-slate-800 sticky bottom-0 pb-safe">
+                                <div className="p-3 bg-slate-900/95 border-t border-slate-800 sticky bottom-0">
                                     <div className="flex items-end gap-2 max-w-lg mx-auto">
                                         <button onClick={()=>fileInputRef.current.click()} className={`p-3 rounded-full bg-slate-800 border border-slate-700 active-press ${selectedImage ? 'text-teal-400 border-teal-500' : 'text-slate-400'}`}>
                                             <i data-lucide="camera" className="w-5 h-5"></i>
@@ -315,8 +283,7 @@
                         {activeTab === "journal" && <JournalView />}
                     </main>
 
-                    {/* ナビゲーション */}
-                    <nav className="bg-slate-900 border-t border-slate-800 pb-safe h-16 flex justify-around items-center z-20 relative">
+                    <nav className="bg-slate-900 border-t border-slate-800 pb-safe-area h-16 flex justify-around items-center z-20">
                         <button onClick={() => setActiveTab("chat")} className={`flex flex-col items-center gap-1 w-16 active-press ${activeTab === "chat" ? "text-teal-400" : "text-slate-500"}`}><i data-lucide="message-circle" className="w-6 h-6"></i><span className="text-[10px] font-bold">チャット</span></button>
                         <button onClick={() => setActiveTab("calendar")} className={`flex flex-col items-center gap-1 w-16 active-press ${activeTab === "calendar" ? "text-teal-400" : "text-slate-500"}`}><i data-lucide="calendar" className="w-6 h-6"></i><span className="text-[10px] font-bold">カレンダー</span></button>
                         <button onClick={() => setActiveTab("journal")} className={`flex flex-col items-center gap-1 w-16 active-press ${activeTab === "journal" ? "text-teal-400" : "text-slate-500"}`}><i data-lucide="book" className="w-6 h-6"></i><span className="text-[10px] font-bold">日記</span></button>
