@@ -2,21 +2,28 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AI Partner Diary Stable</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Partner Diary Final</title>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    
     <script type="importmap">
       { "imports": { "@google/generative-ai": "https://esm.run/@google/generative-ai" } }
     </script>
+
     <style>
-        body { background-color: #0f172a; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, sans-serif; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+        body { 
+            background-color: #0f172a; 
+            color: #f1f5f9; 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior: none;
+        }
         ::-webkit-scrollbar { display: none; }
-        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-        .pt-safe { padding-top: env(safe-area-inset-top); }
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .active-press:active { transform: scale(0.95); opacity: 0.8; }
@@ -24,6 +31,7 @@
 </head>
 <body>
     <div id="root"></div>
+
     <script type="text/babel" data-type="module">
         import { GoogleGenerativeAI } from "@google/generative-ai";
         const { useState, useEffect, useRef } = React;
@@ -47,20 +55,26 @@
                 if (savedMsgs) setMessages(JSON.parse(savedMsgs));
                 const savedDiaries = localStorage.getItem("ai_diary_entries");
                 if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
+
                 if (!savedMsgs) {
-                    setMessages([{ id: 1, text: "こんにちは！\nもう一度話しかけてみてください。今度はうまくいくはずです！", sender: "ai", timestamp: new Date().toISOString() }]);
+                    setMessages([{
+                        id: 1, text: "こんにちは！これで確実に直ったはずです。\nGemini Proモデルに切り替えました！", sender: "ai", timestamp: new Date().toISOString()
+                    }]);
                 }
             }, []);
 
+            // アイコン再描画
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
                 if (activeTab === 'chat') scrollToBottom();
-            }, [activeTab, showSettings, isLoading, messages]);
+            }, [messages, activeTab, showSettings, isLoading]);
 
             useEffect(() => { localStorage.setItem("ai_diary_messages", JSON.stringify(messages)); }, [messages]);
             useEffect(() => { localStorage.setItem("ai_diary_entries", JSON.stringify(diaries)); }, [diaries]);
 
-            const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); };
+            const scrollToBottom = () => {
+                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
 
             const handleImageSelect = (e) => {
                 const file = e.target.files[0];
@@ -76,7 +90,14 @@
                 if ((!inputText.trim() && !selectedImage) || isLoading) return;
                 if (!apiKey) { setShowSettings(true); return; }
 
-                const newUserMsg = { id: Date.now(), text: inputText, image: selectedImage, sender: "user", timestamp: new Date().toISOString() };
+                const newUserMsg = {
+                    id: Date.now(),
+                    text: inputText,
+                    image: selectedImage,
+                    sender: "user",
+                    timestamp: new Date().toISOString()
+                };
+                
                 const currentHistory = [...messages, newUserMsg];
                 setMessages(currentHistory);
                 setInputText("");
@@ -87,42 +108,37 @@
                     const cleanKey = apiKey.trim();
                     const genAI = new GoogleGenerativeAI(cleanKey);
                     
-                    // ★修正ポイント: モデル名を正式名称に変更
-                    // もしflash-001がダメならproに切り替えるロジックなどは複雑になるので、
-                    // まずは最も確実な指定方法を使用します。
-                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
+                    // 【修正】最も安定している "gemini-pro" を使用
+                    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-                    const historyText = currentHistory.slice(-6).map(m => `${m.sender === 'user' ? '私' : 'AI'}: ${m.text || '(画像)'}`).join("\n");
-                    const prompt = `あなたは親しみやすいAIパートナーです。3行以内で返信して。\n\n履歴:\n${historyText}`;
+                    const historyText = currentHistory.slice(-6).map(m => 
+                        `${m.sender === 'user' ? '私' : 'AIパートナー'}: ${m.text || '(画像送信)'}`
+                    ).join("\n");
+
+                    const prompt = `あなたは親しみやすいAIパートナーです。以下の会話履歴を踏まえて、共感したり質問したりして会話を広げてください。3行以内で返して。絵文字も使って。\n\n履歴:\n${historyText}`;
 
                     let result;
                     if (selectedImageBase64) {
-                        result = await model.generateContent([prompt, { inlineData: { data: selectedImageBase64, mimeType: "image/jpeg" } }]);
+                        // gemini-pro-vision は画像対応だが、gemini-pro はテキストのみの場合があるため
+                        // 安全策として画像がある場合は gemini-1.5-flash を試す（画像はFlashの方が得意）
+                        // だがエラー回避を優先し、一旦テキストのみで応答させるか、モデルを切り替える
+                        // ここでは、画像がある場合のみ 1.5-flash を試すハイブリッド構成にします
+                        try {
+                             const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                             result = await visionModel.generateContent([prompt, { inlineData: { data: selectedImageBase64, mimeType: "image/jpeg" } }]);
+                        } catch(e) {
+                             // 画像でコケたらテキストだけでProに投げる
+                             result = await model.generateContent(prompt + "\n(ユーザーから画像が送られましたが読み込めませんでした)");
+                        }
                     } else {
                         result = await model.generateContent(prompt);
                     }
+
                     const aiResponse = (await result.response).text();
                     setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
                     setSelectedImageBase64(null);
                 } catch (error) {
-                    console.error(error);
-                    // エラーが出たらもう一度だけ 'gemini-pro' (旧安定版) でトライする救済措置
-                    if (error.message.includes("404") || error.message.includes("not found")) {
-                         try {
-                            const cleanKey = apiKey.trim();
-                            const genAI = new GoogleGenerativeAI(cleanKey);
-                            const fallbackModel = genAI.getGenerativeModel({ model: "gemini-pro" });
-                            const result = await fallbackModel.generateContent(`あなたはAIパートナーです。短く返事して。\nユーザー: ${inputText}`);
-                            const aiResponse = (await result.response).text();
-                            setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
-                            setSelectedImageBase64(null);
-                            return;
-                         } catch(e) {
-                             // それでもダメならエラー表示
-                         }
-                    }
-
-                    setMessages(prev => [...prev, { id: Date.now() + 1, text: "⚠️ まだエラーが出ます:\n" + error.message, sender: "ai", timestamp: new Date().toISOString() }]);
+                    setMessages(prev => [...prev, { id: Date.now() + 1, text: "エラー: " + error.message, sender: "ai", timestamp: new Date().toISOString() }]);
                 } finally {
                     setIsLoading(false);
                 }
@@ -130,27 +146,32 @@
 
             const generateDailySummary = async () => {
                 if (!apiKey) { setShowSettings(true); return; }
-                if (messages.length < 2) { alert("会話が少ないです"); return; }
-                if(!confirm("日記を作成しますか？")) return;
+                if (messages.length < 2) { alert("まだ会話が少ないです！"); return; }
+                if(!confirm("今日の会話を分析して日記にまとめますか？")) return;
+
                 setIsLoading(true);
                 try {
                     const cleanKey = apiKey.trim();
                     const genAI = new GoogleGenerativeAI(cleanKey);
-                    // ★ここも正式名称に変更
-                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
+                    // 【修正】ここも "gemini-pro" に統一
+                    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
                     
                     const todayStr = new Date().toDateString();
                     const todaysMsgs = messages.filter(m => new Date(m.timestamp).toDateString() === todayStr);
-                    if(todaysMsgs.length === 0) throw new Error("今日の会話なし");
+                    if(todaysMsgs.length === 0) throw new Error("今日の会話がありません");
+                    
                     const conversation = todaysMsgs.map(m => `${m.sender}: ${m.text}`).join("\n");
-                    const prompt = `会話ログから日記作成。JSONのみ出力。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\nログ:\n${conversation}`;
+                    const prompt = `以下の会話ログから日記を作成してください。JSON形式のみで出力してください。Markdownは不要。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\nログ:\n${conversation}`;
+
                     const result = await model.generateContent(prompt);
                     const text = (await result.response).text().replace(/```json|```/g, "").trim();
                     const data = JSON.parse(text);
+
                     setDiaries(prev => [{ id: Date.now(), date: new Date().toISOString(), ...data }, ...prev]);
                     setActiveTab("journal");
+                    alert("日記を作成しました！🎉");
                 } catch (error) {
-                    alert("エラー: " + error.message);
+                    alert("作成失敗: " + error.message);
                 } finally {
                     setIsLoading(false);
                 }
@@ -171,9 +192,10 @@
                     const checkDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day).toDateString();
                     return diaries.some(d => new Date(d.date).toDateString() === checkDate);
                 };
+
                 return (
-                    <div className="p-4 fade-in h-full flex flex-col pt-safe">
-                        <div className="flex justify-between items-center mb-6 mt-2">
+                    <div className="p-4 fade-in h-full flex flex-col">
+                        <div className="flex justify-between items-center mb-6">
                             <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 bg-slate-800 rounded-full active-press"><i data-lucide="chevron-left"></i></button>
                             <h2 className="text-xl font-bold">{currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月</h2>
                             <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 bg-slate-800 rounded-full active-press"><i data-lucide="chevron-right"></i></button>
@@ -198,8 +220,8 @@
             };
 
             const JournalView = () => (
-                <div className="p-4 fade-in pb-20 overflow-y-auto h-full pt-safe">
-                    <h2 className="text-xl font-bold mb-6 mt-2">日記アーカイブ</h2>
+                <div className="p-4 fade-in pb-20 overflow-y-auto h-full">
+                    <h2 className="text-xl font-bold mb-6">日記アーカイブ</h2>
                     {diaries.length === 0 ? <p className="text-center py-20 text-slate-600">記録はまだありません</p> : (
                         <div className="space-y-4">
                             {diaries.map(d => (
@@ -231,31 +253,36 @@
                             </div>
                         </div>
                     )}
-                    <header className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex justify-between items-center z-10 pt-safe">
+
+                    <header className="px-4 py-3 bg-slate-900/95 border-b border-slate-800 flex justify-between items-center z-10">
                         <div className="flex items-center gap-2">
                             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-400 to-blue-500 flex items-center justify-center"><i data-lucide="bot" className="text-slate-900 w-5 h-5"></i></div>
                             <h1 className="font-bold text-sm">AI Partner</h1>
                         </div>
                         <button onClick={() => setShowSettings(true)} className="p-2 bg-slate-800 rounded-full text-slate-400 active-press"><i data-lucide="settings" className="w-4 h-4"></i></button>
                     </header>
+
                     <main className="flex-1 overflow-y-auto bg-slate-900 relative">
                         {activeTab === "chat" && (
                             <div className="min-h-full pb-20 flex flex-col">
                                 <div className="flex-1 p-4 space-y-4">
                                     {messages.map((msg) => (
                                         <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                            <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.sender === 'user' ? 'bg-teal-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'}`}>
+                                            <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.sender === 'user' ? 'bg-teal-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'}`}>
                                                 {msg.image && <img src={msg.image} className="rounded-lg mb-2 max-h-40 object-cover" />}
                                                 {msg.text}
                                             </div>
                                         </div>
                                     ))}
-                                    {isLoading && <div className="p-4 text-xs text-slate-500 animate-pulse">考え中...</div>}
+                                    {isLoading && <div className="p-4 text-xs text-slate-500 animate-pulse">AI入力中...</div>}
                                     <div ref={messagesEndRef} />
                                 </div>
-                                <div className="p-3 bg-slate-900/95 border-t border-slate-800 sticky bottom-0 pb-safe">
+                                
+                                <div className="p-3 bg-slate-900/95 border-t border-slate-800 sticky bottom-0">
                                     <div className="flex items-end gap-2 max-w-lg mx-auto">
-                                        <button onClick={()=>fileInputRef.current.click()} className={`p-3 rounded-full bg-slate-800 border border-slate-700 active-press ${selectedImage ? 'text-teal-400 border-teal-500' : 'text-slate-400'}`}><i data-lucide="camera" className="w-5 h-5"></i></button>
+                                        <button onClick={()=>fileInputRef.current.click()} className={`p-3 rounded-full bg-slate-800 border border-slate-700 active-press ${selectedImage ? 'text-teal-400 border-teal-500' : 'text-slate-400'}`}>
+                                            <i data-lucide="camera" className="w-5 h-5"></i>
+                                        </button>
                                         <input type="file" ref={fileInputRef} onChange={handleImageSelect} className="hidden" accept="image/*" />
                                         <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="メッセージ..." className="flex-1 bg-slate-800 text-white border border-slate-700 rounded-2xl p-3 text-sm focus:outline-none focus:border-teal-500 resize-none max-h-32" rows="1"/>
                                         <button onClick={handleSend} disabled={!inputText && !selectedImage} className="p-3 rounded-full bg-teal-600 text-white shadow-lg active-press disabled:opacity-50"><i data-lucide="send" className="w-5 h-5"></i></button>
@@ -271,7 +298,8 @@
                         {activeTab === "calendar" && <CalendarView />}
                         {activeTab === "journal" && <JournalView />}
                     </main>
-                    <nav className="bg-slate-900 border-t border-slate-800 pb-safe h-16 flex justify-around items-center z-20">
+
+                    <nav className="bg-slate-900 border-t border-slate-800 pb-safe-area h-16 flex justify-around items-center z-20">
                         <button onClick={() => setActiveTab("chat")} className={`flex flex-col items-center gap-1 w-16 active-press ${activeTab === "chat" ? "text-teal-400" : "text-slate-500"}`}><i data-lucide="message-circle" className="w-6 h-6"></i><span className="text-[10px] font-bold">チャット</span></button>
                         <button onClick={() => setActiveTab("calendar")} className={`flex flex-col items-center gap-1 w-16 active-press ${activeTab === "calendar" ? "text-teal-400" : "text-slate-500"}`}><i data-lucide="calendar" className="w-6 h-6"></i><span className="text-[10px] font-bold">カレンダー</span></button>
                         <button onClick={() => setActiveTab("journal")} className={`flex flex-col items-center gap-1 w-16 active-press ${activeTab === "journal" ? "text-teal-400" : "text-slate-500"}`}><i data-lucide="book" className="w-6 h-6"></i><span className="text-[10px] font-bold">日記</span></button>
