@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AI Partner Diary Debug</title>
+    <title>AI Partner Diary Stable</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -48,7 +48,7 @@
                 const savedDiaries = localStorage.getItem("ai_diary_entries");
                 if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
                 if (!savedMsgs) {
-                    setMessages([{ id: 1, text: "こんにちは！\nもしエラーが出たら、その英語の文字を教えてくださいね。", sender: "ai", timestamp: new Date().toISOString() }]);
+                    setMessages([{ id: 1, text: "こんにちは！\nもう一度話しかけてみてください。今度はうまくいくはずです！", sender: "ai", timestamp: new Date().toISOString() }]);
                 }
             }, []);
 
@@ -84,10 +84,13 @@
                 setIsLoading(true);
 
                 try {
-                    // ★ここでキーの空白を強制削除
                     const cleanKey = apiKey.trim();
                     const genAI = new GoogleGenerativeAI(cleanKey);
-                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                    
+                    // ★修正ポイント: モデル名を正式名称に変更
+                    // もしflash-001がダメならproに切り替えるロジックなどは複雑になるので、
+                    // まずは最も確実な指定方法を使用します。
+                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
 
                     const historyText = currentHistory.slice(-6).map(m => `${m.sender === 'user' ? '私' : 'AI'}: ${m.text || '(画像)'}`).join("\n");
                     const prompt = `あなたは親しみやすいAIパートナーです。3行以内で返信して。\n\n履歴:\n${historyText}`;
@@ -102,9 +105,24 @@
                     setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
                     setSelectedImageBase64(null);
                 } catch (error) {
-                    // ★ここで本当のエラーを表示
                     console.error(error);
-                    setMessages(prev => [...prev, { id: Date.now() + 1, text: "⚠️ エラー発生:\n" + error.message, sender: "ai", timestamp: new Date().toISOString() }]);
+                    // エラーが出たらもう一度だけ 'gemini-pro' (旧安定版) でトライする救済措置
+                    if (error.message.includes("404") || error.message.includes("not found")) {
+                         try {
+                            const cleanKey = apiKey.trim();
+                            const genAI = new GoogleGenerativeAI(cleanKey);
+                            const fallbackModel = genAI.getGenerativeModel({ model: "gemini-pro" });
+                            const result = await fallbackModel.generateContent(`あなたはAIパートナーです。短く返事して。\nユーザー: ${inputText}`);
+                            const aiResponse = (await result.response).text();
+                            setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
+                            setSelectedImageBase64(null);
+                            return;
+                         } catch(e) {
+                             // それでもダメならエラー表示
+                         }
+                    }
+
+                    setMessages(prev => [...prev, { id: Date.now() + 1, text: "⚠️ まだエラーが出ます:\n" + error.message, sender: "ai", timestamp: new Date().toISOString() }]);
                 } finally {
                     setIsLoading(false);
                 }
@@ -118,7 +136,8 @@
                 try {
                     const cleanKey = apiKey.trim();
                     const genAI = new GoogleGenerativeAI(cleanKey);
-                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                    // ★ここも正式名称に変更
+                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
                     
                     const todayStr = new Date().toDateString();
                     const todaysMsgs = messages.filter(m => new Date(m.timestamp).toDateString() === todayStr);
