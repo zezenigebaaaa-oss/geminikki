@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Partner Diary</title>
+    <title>AI Partner Diary Manual</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -36,18 +36,12 @@
         import { GoogleGenerativeAI } from "@google/generative-ai";
         const { useState, useEffect, useRef } = React;
 
-        // ★修正点: 試行するモデル名のリスト
-        const MODEL_CANDIDATES = [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-001",
-            "gemini-1.5-pro",
-            "gemini-1.0-pro",
-            "gemini-pro"
-        ];
-
         const App = () => {
             const [activeTab, setActiveTab] = useState("chat");
             const [apiKey, setApiKey] = useState(localStorage.getItem("gemini_api_key") || "");
+            // ★新機能: モデル名を保存・編集できるようにする
+            const [modelName, setModelName] = useState(localStorage.getItem("gemini_model_name") || "gemini-1.5-flash");
+            
             const [showSettings, setShowSettings] = useState(false);
             const [messages, setMessages] = useState([]);
             const [diaries, setDiaries] = useState([]);
@@ -67,7 +61,7 @@
 
                 if (!savedMsgs) {
                     setMessages([{
-                        id: 1, text: "こんにちは！\nもしエラーが出ても、自動で別の回路を探すように進化しました！", sender: "ai", timestamp: new Date().toISOString()
+                        id: 1, text: "こんにちは！\nもしエラーが出たら、右上の設定から「モデル名」を変えてみてくださいね。", sender: "ai", timestamp: new Date().toISOString()
                     }]);
                 }
             }, []);
@@ -82,40 +76,6 @@
 
             const scrollToBottom = () => {
                 messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-            };
-
-            // ★修正点: 総当たりでAPIを呼ぶ関数
-            const callGeminiWithFallback = async (apiKey, prompt, imageBase64 = null) => {
-                const cleanKey = apiKey.trim();
-                const genAI = new GoogleGenerativeAI(cleanKey);
-                let lastError = null;
-
-                // リストにあるモデルを順番に試す
-                for (const modelName of MODEL_CANDIDATES) {
-                    try {
-                        console.log(`Trying model: ${modelName}`);
-                        const model = genAI.getGenerativeModel({ model: modelName });
-                        let result;
-                        
-                        if (imageBase64) {
-                            result = await model.generateContent([prompt, { inlineData: { data: imageBase64, mimeType: "image/jpeg" } }]);
-                        } else {
-                            result = await model.generateContent(prompt);
-                        }
-                        
-                        // 成功したら結果を返す
-                        return (await result.response).text();
-                    } catch (e) {
-                        console.warn(`Model ${modelName} failed:`, e);
-                        lastError = e;
-                        // 404(Not Found)なら次のモデルへ。それ以外(APIキー間違い等)ならループ終了
-                        if (!e.message.includes("404") && !e.message.includes("not found")) {
-                             throw e;
-                        }
-                    }
-                }
-                // 全部ダメだった場合
-                throw new Error("全モデル接続失敗: " + lastError?.message);
             };
 
             const handleImageSelect = (e) => {
@@ -147,19 +107,32 @@
                 setIsLoading(true);
 
                 try {
+                    const cleanKey = apiKey.trim();
+                    const genAI = new GoogleGenerativeAI(cleanKey);
+                    
+                    // ★ユーザーが設定したモデル名を使う
+                    const cleanModelName = modelName.trim();
+                    const model = genAI.getGenerativeModel({ model: cleanModelName });
+
                     const historyText = currentHistory.slice(-6).map(m => 
                         `${m.sender === 'user' ? '私' : 'AIパートナー'}: ${m.text || '(画像送信)'}`
                     ).join("\n");
 
                     const prompt = `あなたは親しみやすいAIパートナーです。以下の会話履歴を踏まえて、共感したり質問したりして会話を広げてください。3行以内で返して。絵文字も使って。\n\n履歴:\n${historyText}`;
 
-                    // ★ここで自動修復呼び出し
-                    const aiResponse = await callGeminiWithFallback(apiKey, prompt, selectedImageBase64);
+                    let result;
+                    if (selectedImageBase64) {
+                        result = await model.generateContent([prompt, { inlineData: { data: selectedImageBase64, mimeType: "image/jpeg" } }]);
+                    } else {
+                        result = await model.generateContent(prompt);
+                    }
 
+                    const aiResponse = (await result.response).text();
                     setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
                     setSelectedImageBase64(null);
                 } catch (error) {
-                    setMessages(prev => [...prev, { id: Date.now() + 1, text: "エラー: " + error.message, sender: "ai", timestamp: new Date().toISOString() }]);
+                    console.error(error);
+                    setMessages(prev => [...prev, { id: Date.now() + 1, text: `⚠️ エラー (${modelName}):\n${error.message}`, sender: "ai", timestamp: new Date().toISOString() }]);
                 } finally {
                     setIsLoading(false);
                 }
@@ -172,6 +145,13 @@
 
                 setIsLoading(true);
                 try {
+                    const cleanKey = apiKey.trim();
+                    const genAI = new GoogleGenerativeAI(cleanKey);
+                    
+                    // ★ここも設定値を使う
+                    const cleanModelName = modelName.trim();
+                    const model = genAI.getGenerativeModel({ model: cleanModelName });
+                    
                     const todayStr = new Date().toDateString();
                     const todaysMsgs = messages.filter(m => new Date(m.timestamp).toDateString() === todayStr);
                     if(todaysMsgs.length === 0) throw new Error("今日の会話がありません");
@@ -179,10 +159,8 @@
                     const conversation = todaysMsgs.map(m => `${m.sender}: ${m.text}`).join("\n");
                     const prompt = `以下の会話ログから日記を作成してください。JSON形式のみで出力してください。Markdownは不要。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\nログ:\n${conversation}`;
 
-                    // ★ここでも自動修復呼び出し
-                    const rawText = await callGeminiWithFallback(apiKey, prompt);
-                    
-                    const text = rawText.replace(/```json|```/g, "").trim();
+                    const result = await model.generateContent(prompt);
+                    const text = (await result.response).text().replace(/```json|```/g, "").trim();
                     const data = JSON.parse(text);
 
                     setDiaries(prev => [{ id: Date.now(), date: new Date().toISOString(), ...data }, ...prev]);
@@ -265,9 +243,22 @@
                     {showSettings && (
                         <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setShowSettings(false)}>
                             <div className="bg-slate-800 p-6 rounded-2xl w-full max-w-sm border border-slate-700" onClick={e => e.stopPropagation()}>
-                                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">APIキー設定</h2>
+                                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">設定</h2>
+                                
+                                <label className="text-xs text-slate-400 mb-1 block">APIキー</label>
                                 <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mb-4" placeholder="AIza..." />
-                                <button onClick={() => { localStorage.setItem("gemini_api_key", apiKey); setShowSettings(false); }} className="w-full bg-teal-600 text-white py-3 rounded-lg font-bold active-press">保存</button>
+                                
+                                <label className="text-xs text-teal-400 mb-1 block font-bold">使用モデル名 (エラー時はここを変更)</label>
+                                <input type="text" value={modelName} onChange={(e) => setModelName(e.target.value)} className="w-full bg-slate-900 border border-teal-600 rounded-lg p-3 text-white mb-4" placeholder="gemini-1.5-flash" />
+                                <p className="text-[10px] text-slate-500 mb-4">
+                                    例: gemini-1.5-flash, gemini-1.5-flash-001, gemini-2.0-flash-exp, gemini-pro
+                                </p>
+
+                                <button onClick={() => { 
+                                    localStorage.setItem("gemini_api_key", apiKey); 
+                                    localStorage.setItem("gemini_model_name", modelName);
+                                    setShowSettings(false); 
+                                }} className="w-full bg-teal-600 text-white py-3 rounded-lg font-bold active-press">保存して閉じる</button>
                             </div>
                         </div>
                     )}
