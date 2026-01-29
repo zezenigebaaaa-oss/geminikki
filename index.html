@@ -3,26 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Diary Input Fix</title>
+    <title>AI Diary Safe</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        body { background-color: #000000; color: #f1f5f9; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background-color: #000000; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, sans-serif; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { display: none; }
-        .input-screen { position: fixed; inset: 0; z-index: 9999; background: #000; padding: 20px; display: flex; flex-col; justify-content: center; }
+        input, textarea { font-size: 16px !important; }
     </style>
 </head>
 <body>
     <div id="root"></div>
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        const MODEL = "gemini-1.5-flash"; 
+
+        // ★安全策：一点突破（ループなし）
+        const TARGET_MODEL = "gemini-1.5-flash";
+        const API_VERSION = "v1beta";
 
         const App = () => {
-            const [hasKey, setHasKey] = useState(false); // キーがあるかどうか
+            const [hasKey, setHasKey] = useState(false);
             const [apiKey, setApiKey] = useState("");
             
             const [activeTab, setActiveTab] = useState("chat");
@@ -35,20 +38,18 @@
             const messagesEndRef = useRef(null);
             const fileInputRef = useRef(null);
 
-            // 起動時にキーチェック
             useEffect(() => {
                 const savedKey = localStorage.getItem("gemini_api_key_new");
                 if (savedKey && savedKey.length > 10) {
                     setApiKey(savedKey);
                     setHasKey(true);
                 }
-
                 const savedMsgs = localStorage.getItem("ai_diary_messages");
                 if (savedMsgs) setMessages(JSON.parse(savedMsgs));
                 const savedDiaries = localStorage.getItem("ai_diary_entries");
                 if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
                 
-                if (!savedMsgs) setMessages([{ id: 1, text: "準備完了です！\nこれでようやく会話できますね。", sender: "ai", timestamp: new Date().toISOString() }]);
+                if (!savedMsgs) setMessages([{ id: 1, text: "安全接続モードです。\nボタン1回につき1回しか通信しないので、ロックされる心配はありません。", sender: "ai", timestamp: new Date().toISOString() }]);
             }, []);
 
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); if (hasKey && activeTab === 'chat') scrollToBottom(); }, [messages, activeTab, hasKey]);
@@ -58,15 +59,11 @@
             const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); };
 
             const handleSaveKey = () => {
-                if (!apiKey || apiKey.length < 10) {
-                    alert("正しいキーを入力してください");
-                    return;
-                }
+                if (!apiKey || apiKey.length < 10) { alert("キーを入力してください"); return; }
                 localStorage.setItem("gemini_api_key_new", apiKey);
-                setHasKey(true); // 画面切り替え
+                setHasKey(true);
             };
 
-            // 画像処理
             const handleImageSelect = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -77,13 +74,28 @@
                 reader.readAsDataURL(file);
             };
 
-            // 通信
-            const sendToGeminiRaw = async (text, imageBase64) => {
+            // ★シンプル・イズ・ベストな通信処理
+            const sendToGeminiSafe = async (text, imageBase64) => {
                 const cleanKey = apiKey.trim();
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${cleanKey}`;
-                let contents = imageBase64 ? [{ parts: [{ text: text }, { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }] }] : [{ parts: [{ text: text }] }];
-                const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: contents }) });
-                if (!response.ok) { const d = await response.json(); throw new Error(d.error?.message || response.statusText); }
+                // Google推奨の標準エンドポイント
+                const url = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${TARGET_MODEL}:generateContent?key=${cleanKey}`;
+                
+                let contents = imageBase64 ? 
+                    [{ parts: [{ text: text }, { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }] }] : 
+                    [{ parts: [{ text: text }] }];
+                
+                const response = await fetch(url, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ contents: contents }) 
+                });
+
+                if (!response.ok) {
+                    const d = await response.json();
+                    // 万が一のエラー時は詳細を表示（再試行はしない）
+                    throw new Error(d.error?.message || response.statusText);
+                }
+
                 const data = await response.json();
                 return data.candidates[0].content.parts[0].text;
             };
@@ -95,9 +107,10 @@
                 setInputText("");
                 setSelectedImage(null);
                 setIsLoading(true);
+                
                 try {
                     const history = [...messages, newUserMsg].slice(-6).map(m => `${m.sender}: ${m.text}`).join("\n");
-                    const aiResponse = await sendToGeminiRaw(`あなたは親しい友人です。短く返して。\n${history}`, selectedImageBase64);
+                    const aiResponse = await sendToGeminiSafe(`あなたは親しい友人です。短く返して。\n${history}`, selectedImageBase64);
                     setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
                     setSelectedImageBase64(null);
                 } catch (error) {
@@ -111,7 +124,7 @@
                 try {
                     const today = new Date().toDateString();
                     const msgs = messages.filter(m => new Date(m.timestamp).toDateString() === today).map(m=>`${m.sender}:${m.text}`).join("\n");
-                    const raw = await sendToGeminiRaw(`日記作成。JSONのみ出力。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\n${msgs}`, null);
+                    const raw = await sendToGeminiSafe(`日記作成。JSONのみ出力。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\n${msgs}`, null);
                     const data = JSON.parse(raw.replace(/```json|```/g, "").trim());
                     setDiaries(prev => [{ id: Date.now(), date: new Date().toISOString(), ...data }, ...prev]);
                     setActiveTab("journal");
@@ -119,33 +132,26 @@
                 } catch (e) { alert("失敗: " + e.message); } finally { setIsLoading(false); }
             };
 
-            // ★ 全画面入力モード（ポップアップではない）
+            // 入力画面
             if (!hasKey) {
                 return (
                     <div className="h-screen w-screen bg-black flex flex-col items-center justify-center p-6">
-                        <h1 className="text-2xl font-bold text-red-500 mb-6">APIキー入力</h1>
-                        <p className="text-slate-400 mb-2 text-sm">別アカウントの新しいキーを貼ってください</p>
-                        
-                        {/* 巨大な入力欄 */}
+                        <h1 className="text-xl font-bold text-teal-400 mb-6">APIキー入力 (安全版)</h1>
                         <textarea 
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
-                            placeholder="ここにペースト (AIza...)"
-                            className="w-full h-32 bg-slate-900 border-2 border-slate-700 rounded-xl p-4 text-white text-lg mb-6 focus:border-red-500 outline-none"
+                            placeholder="ここに新しいキーをペースト..."
+                            className="w-full h-32 bg-slate-900 border border-slate-700 rounded-xl p-4 text-white mb-6 focus:border-teal-500 outline-none resize-none"
                         />
-                        
-                        <button onClick={handleSaveKey} className="w-full bg-red-600 text-white py-4 rounded-xl font-bold text-lg active-press">
-                            保存してスタート
-                        </button>
+                        <button onClick={handleSaveKey} className="w-full bg-teal-600 text-white py-4 rounded-xl font-bold active-press">保存して開始</button>
                     </div>
                 );
             }
 
-            // メインアプリ画面
             return (
                 <div className="h-screen flex flex-col bg-slate-900 overflow-hidden">
                     <header className="px-4 py-3 bg-slate-900 border-b border-slate-800 flex justify-between items-center z-10">
-                        <h1 className="font-bold text-sm text-teal-400">AI Diary</h1>
+                        <h1 className="font-bold text-sm text-teal-400">AI Diary Safe</h1>
                         <button onClick={() => setHasKey(false)} className="p-2 text-slate-400"><i data-lucide="log-out" className="w-4 h-4"></i></button>
                     </header>
                     <main className="flex-1 overflow-y-auto bg-slate-900 relative">
