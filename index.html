@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Diary 2026 (Free Tier)</title>
+    <title>AI Diary Simple</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -20,18 +20,8 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // ★最強の修正：上から順に試して「無料で動くやつ」を使う
-        // 3.0 -> 2.0 -> 1.5 の順で、エラーが出たら即座に次へ切り替えます
-        const MODEL_CANDIDATES = [
-            "gemini-3.0-flash-exp",  // もしあれば最優先
-            "gemini-3.0-flash",
-            "gemini-2.0-flash-exp", 
-            "gemini-2.0-flash", 
-            "gemini-1.5-flash",      // 実績のある無料枠の定番
-            "gemini-1.5-pro",
-            "gemini-1.5-flash-001",
-            "gemini-pro"             // 最終防衛ライン
-        ];
+        // ★最終結論：無料枠で最も安定しているのはコレだけ。浮気しない。
+        const TARGET_MODEL = "gemini-1.5-flash";
         const API_VERSION = "v1beta";
 
         const App = () => {
@@ -43,8 +33,6 @@
             const [diaries, setDiaries] = useState([]);
             const [inputText, setInputText] = useState("");
             const [isLoading, setIsLoading] = useState(false);
-            const [connectedModel, setConnectedModel] = useState(null); // 接続に成功したモデル名
-            
             const [selectedImage, setSelectedImage] = useState(null);
             const [selectedImageBase64, setSelectedImageBase64] = useState(null);
             const messagesEndRef = useRef(null);
@@ -61,7 +49,7 @@
                 const savedDiaries = localStorage.getItem("ai_diary_entries");
                 if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
                 
-                if (!savedMsgs) setMessages([{ id: 1, text: "システム起動。メッセージ送信時に、無料で使える最適なモデルを自動検索します。", sender: "ai", timestamp: new Date().toISOString() }]);
+                if (!savedMsgs) setMessages([{ id: 1, text: "シンプル接続モード起動。\ngemini-1.5-flash (無料枠) に一本化して接続します。", sender: "ai", timestamp: new Date().toISOString() }]);
             }, []);
 
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); if (hasKey && activeTab === 'chat') scrollToBottom(); }, [messages, activeTab, hasKey]);
@@ -88,59 +76,32 @@
                 reader.readAsDataURL(file);
             };
 
-            // ★今回の修正のキモ：エラーが出たら次のモデルへリレーする関数
-            const sendToGeminiAutoFallback = async (text, imageBase64) => {
+            // ★余計なことをしない、最も基本的な通信コード
+            const sendToGeminiSimple = async (text, imageBase64) => {
                 const cleanKey = apiKey.trim();
-                let lastError = "";
-
-                // 候補リストを順番にアタック
-                for (const model of MODEL_CANDIDATES) {
-                    try {
-                        const url = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${model}:generateContent?key=${cleanKey}`;
-                        
-                        let parts = [{ text: text }];
-                        if (imageBase64) {
-                            parts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
-                        }
-
-                        // 通信開始
-                        const response = await fetch(url, { 
-                            method: 'POST', 
-                            headers: { 'Content-Type': 'application/json' }, 
-                            body: JSON.stringify({ contents: [{ parts: parts }] }) 
-                        });
-
-                        const data = await response.json();
-
-                        // 成功判定
-                        if (response.ok && data.candidates && data.candidates.length > 0) {
-                            console.log(`Success with: ${model}`);
-                            setConnectedModel(model); // 成功したモデルを記録
-                            return data.candidates[0].content.parts[0].text;
-                        }
-
-                        // エラーハンドリング
-                        if (!response.ok) {
-                            const msg = data.error?.message || response.statusText;
-                            // 404(無し) や 429(制限) の場合は次へ。キー無効(400)は停止。
-                            if (msg.includes("404") || msg.includes("not found") || msg.includes("quota") || msg.includes("limit")) {
-                                console.warn(`Model ${model} skipped: ${msg}`);
-                                continue; // 次のモデルへ！
-                            }
-                            throw new Error(msg); // 致命的なエラー
-                        }
-                    } catch (e) {
-                        lastError = e.message;
-                        // ネットワークエラーなども次へ
-                        if (e.message.includes("quota") || e.message.includes("limit") || e.message.includes("404")) {
-                            continue;
-                        }
-                        // それ以外はループ継続
-                    }
+                const url = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${TARGET_MODEL}:generateContent?key=${cleanKey}`;
+                
+                let parts = [{ text: text }];
+                if (imageBase64) {
+                    parts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
                 }
                 
-                // 全滅した場合
-                throw new Error(`全モデルで失敗しました。\n最後の理由: ${lastError}`);
+                // エラーが出ても隠さず、生のメッセージを表示する設定
+                const response = await fetch(url, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ contents: [{ parts: parts }] }) 
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    // エラーメッセージをそのまま返す（原因特定のカギ）
+                    const errorMsg = data.error?.message || JSON.stringify(data.error) || response.statusText;
+                    throw new Error(errorMsg);
+                }
+
+                return data.candidates[0].content.parts[0].text;
             };
 
             const handleSend = async () => {
@@ -155,13 +116,18 @@
                     const history = messages.slice(-6).map(m => `${m.sender}: ${m.text}`).join("\n");
                     const prompt = `あなたは親しい友人です。以下の履歴を踏まえ、最後の発言に短く返して。\n\n[履歴]\n${history}\nuser: ${inputText}`;
                     
-                    const aiResponse = await sendToGeminiAutoFallback(prompt, selectedImageBase64);
+                    const aiResponse = await sendToGeminiSimple(prompt, selectedImageBase64);
                     setMessages(prev => [...prev, { id: Date.now() + 1, text: aiResponse, sender: "ai", timestamp: new Date().toISOString() }]);
                     setSelectedImageBase64(null);
                 } catch (error) {
+                    // エラー内容を分析して日本語訳
                     let friendlyMsg = error.message;
-                    if(friendlyMsg.includes("quota")) friendlyMsg = "無料枠の上限、または有料限定モデルでした。";
-                    setMessages(prev => [...prev, { id: Date.now() + 1, text: `❌ 送信失敗: ${friendlyMsg}`, sender: "ai", timestamp: new Date().toISOString() }]);
+                    if (friendlyMsg.includes("429") || friendlyMsg.includes("Quota")) friendlyMsg = "⚠️ 使いすぎ制限(429)にかかりました。\n1分ほど待ってから再試行してください。";
+                    else if (friendlyMsg.includes("404")) friendlyMsg = `⚠️ モデルが見つかりません。\nAPIキーが古くないか確認してください。`;
+                    else if (friendlyMsg.includes("key")) friendlyMsg = "⚠️ APIキーが無効です。\nキーの入力を間違えていませんか？";
+                    
+                    // 生のエラーも見れるようにしておく
+                    setMessages(prev => [...prev, { id: Date.now() + 1, text: `❌ エラー:\n${friendlyMsg}\n\n(詳細: ${error.message})`, sender: "ai", timestamp: new Date().toISOString() }]);
                 } finally { setIsLoading(false); }
             };
 
@@ -171,7 +137,7 @@
                 try {
                     const today = new Date().toDateString();
                     const msgs = messages.filter(m => new Date(m.timestamp).toDateString() === today).map(m=>`${m.sender}:${m.text}`).join("\n");
-                    const raw = await sendToGeminiAutoFallback(`日記作成。JSON形式のみ出力。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\n${msgs}`, null);
+                    const raw = await sendToGeminiSimple(`日記作成。JSON形式のみ出力。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\n${msgs}`, null);
                     const jsonStr = raw.replace(/```json/g, "").replace(/```/g, "").trim();
                     const data = JSON.parse(jsonStr);
                     setDiaries(prev => [{ id: Date.now(), date: new Date().toISOString(), ...data }, ...prev]);
@@ -184,7 +150,7 @@
                 return (
                     <div className="h-screen w-screen bg-black flex flex-col items-center justify-center p-6">
                         <h1 className="text-xl font-bold text-teal-400 mb-6">APIキー設定</h1>
-                        <p className="text-slate-400 text-sm mb-4">最適なモデルを自動で探します</p>
+                        <p className="text-slate-400 text-sm mb-4">無料版(gemini-1.5-flash)専用</p>
                         <textarea 
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
@@ -199,8 +165,8 @@
             return (
                 <div className="h-screen flex flex-col bg-slate-900 overflow-hidden">
                     <header className="px-4 py-3 bg-slate-900 border-b border-slate-800 flex justify-between items-center z-10">
-                        <h1 className="font-bold text-sm text-teal-400">AI Diary <span className="text-xs text-blue-400">{connectedModel ? connectedModel : "Auto-Detect"}</span></h1>
-                        <button onClick={() => { localStorage.removeItem("gemini_api_key_new"); setHasKey(false); setApiKey(""); setConnectedModel(null); }} className="p-2 text-slate-400"><i data-lucide="log-out" className="w-4 h-4"></i></button>
+                        <h1 className="font-bold text-sm text-teal-400">AI Diary <span className="text-xs text-slate-500">Simple</span></h1>
+                        <button onClick={() => { localStorage.removeItem("gemini_api_key_new"); setHasKey(false); setApiKey(""); }} className="p-2 text-slate-400"><i data-lucide="log-out" className="w-4 h-4"></i></button>
                     </header>
                     <main className="flex-1 overflow-y-auto bg-slate-900 relative">
                         {activeTab === "chat" && (
@@ -213,7 +179,7 @@
                                             </div>
                                         </div>
                                     ))}
-                                    {isLoading && <div className="p-4 text-xs text-slate-500">Searching free model...</div>}
+                                    {isLoading && <div className="p-4 text-xs text-slate-500">Thinking...</div>}
                                     <div ref={messagesEndRef} />
                                 </div>
                                 <div className="p-3 bg-slate-900 border-t border-slate-800 sticky bottom-0">
