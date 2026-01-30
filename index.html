@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Diary Safe</title>
+    <title>AI Diary Safe (Fixed)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -20,9 +20,9 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // ★安全策：一点突破（ループなし）
+        // ★修正1：安定版の 'v1' を使用
         const TARGET_MODEL = "gemini-1.5-flash";
-        const API_VERSION = "v1beta";
+        const API_VERSION = "v1";
 
         const App = () => {
             const [hasKey, setHasKey] = useState(false);
@@ -49,7 +49,7 @@
                 const savedDiaries = localStorage.getItem("ai_diary_entries");
                 if (savedDiaries) setDiaries(JSON.parse(savedDiaries));
                 
-                if (!savedMsgs) setMessages([{ id: 1, text: "安全接続モードです。\nボタン1回につき1回しか通信しないので、ロックされる心配はありません。", sender: "ai", timestamp: new Date().toISOString() }]);
+                if (!savedMsgs) setMessages([{ id: 1, text: "【修正版】システム正常。\nこれでエラーが出る場合、APIキー自体に問題（有効期限切れや権限不足）がある可能性があります。", sender: "ai", timestamp: new Date().toISOString() }]);
             }, []);
 
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); if (hasKey && activeTab === 'chat') scrollToBottom(); }, [messages, activeTab, hasKey]);
@@ -59,8 +59,10 @@
             const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); };
 
             const handleSaveKey = () => {
-                if (!apiKey || apiKey.length < 10) { alert("キーを入力してください"); return; }
-                localStorage.setItem("gemini_api_key_new", apiKey);
+                const cleanKey = apiKey.trim();
+                if (!cleanKey || cleanKey.length < 10) { alert("キーを正しく入力してください"); return; }
+                localStorage.setItem("gemini_api_key_new", cleanKey);
+                setApiKey(cleanKey); // トリムしたキーをセット
                 setHasKey(true);
             };
 
@@ -74,14 +76,14 @@
                 reader.readAsDataURL(file);
             };
 
-            // ★シンプル・イズ・ベストな通信処理
             const sendToGeminiSafe = async (text, imageBase64) => {
                 const cleanKey = apiKey.trim();
-                // Google推奨の標準エンドポイント
+                // URL生成（v1を使用）
                 const url = `https://generativelanguage.googleapis.com/${API_VERSION}/models/${TARGET_MODEL}:generateContent?key=${cleanKey}`;
                 
+                // ★修正2：inline_data ではなく inlineData (キャメルケース) が正しい仕様
                 let contents = imageBase64 ? 
-                    [{ parts: [{ text: text }, { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }] }] : 
+                    [{ parts: [{ text: text }, { inlineData: { mimeType: "image/jpeg", data: imageBase64 } }] }] : 
                     [{ parts: [{ text: text }] }];
                 
                 const response = await fetch(url, { 
@@ -90,13 +92,20 @@
                     body: JSON.stringify({ contents: contents }) 
                 });
 
+                const data = await response.json();
+
                 if (!response.ok) {
-                    const d = await response.json();
-                    // 万が一のエラー時は詳細を表示（再試行はしない）
-                    throw new Error(d.error?.message || response.statusText);
+                    // エラー内容の詳細化
+                    let errorMsg = data.error?.message || response.statusText;
+                    if (errorMsg.includes("key not valid")) errorMsg = "APIキーが無効です。正しいキーを確認してください。";
+                    if (errorMsg.includes("not found")) errorMsg = "モデルが見つかりません(404)。バージョンかキーの設定を確認してください。";
+                    throw new Error(errorMsg);
                 }
 
-                const data = await response.json();
+                if (!data.candidates || data.candidates.length === 0) {
+                    throw new Error("AIからの応答が空でした。ブロックされた可能性があります。");
+                }
+
                 return data.candidates[0].content.parts[0].text;
             };
 
@@ -124,23 +133,28 @@
                 try {
                     const today = new Date().toDateString();
                     const msgs = messages.filter(m => new Date(m.timestamp).toDateString() === today).map(m=>`${m.sender}:${m.text}`).join("\n");
-                    const raw = await sendToGeminiSafe(`日記作成。JSONのみ出力。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\n${msgs}`, null);
-                    const data = JSON.parse(raw.replace(/```json|```/g, "").trim());
+                    const raw = await sendToGeminiSafe(`日記作成。以下のJSON形式のみで出力して。\n{"title":"タイトル","summary":"要約","tags":["タグ"],"weather":"sunny"}\n会話ログ:\n${msgs}`, null);
+                    
+                    // JSON抽出の強化（マークダウン除去）
+                    const jsonStr = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+                    const data = JSON.parse(jsonStr);
+                    
                     setDiaries(prev => [{ id: Date.now(), date: new Date().toISOString(), ...data }, ...prev]);
                     setActiveTab("journal");
                     alert("完了！");
-                } catch (e) { alert("失敗: " + e.message); } finally { setIsLoading(false); }
+                } catch (e) { alert("作成失敗: " + e.message); } finally { setIsLoading(false); }
             };
 
             // 入力画面
             if (!hasKey) {
                 return (
                     <div className="h-screen w-screen bg-black flex flex-col items-center justify-center p-6">
-                        <h1 className="text-xl font-bold text-teal-400 mb-6">APIキー入力 (安全版)</h1>
+                        <h1 className="text-xl font-bold text-teal-400 mb-6">APIキー再設定 (修正版)</h1>
+                        <p className="text-slate-400 text-sm mb-4">Google AI Studioのキーを入力してください</p>
                         <textarea 
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
-                            placeholder="ここに新しいキーをペースト..."
+                            placeholder="AIzaSy..."
                             className="w-full h-32 bg-slate-900 border border-slate-700 rounded-xl p-4 text-white mb-6 focus:border-teal-500 outline-none resize-none"
                         />
                         <button onClick={handleSaveKey} className="w-full bg-teal-600 text-white py-4 rounded-xl font-bold active-press">保存して開始</button>
@@ -151,8 +165,8 @@
             return (
                 <div className="h-screen flex flex-col bg-slate-900 overflow-hidden">
                     <header className="px-4 py-3 bg-slate-900 border-b border-slate-800 flex justify-between items-center z-10">
-                        <h1 className="font-bold text-sm text-teal-400">AI Diary Safe</h1>
-                        <button onClick={() => setHasKey(false)} className="p-2 text-slate-400"><i data-lucide="log-out" className="w-4 h-4"></i></button>
+                        <h1 className="font-bold text-sm text-teal-400">AI Diary <span className="text-xs text-yellow-500">v1 Fixed</span></h1>
+                        <button onClick={() => { localStorage.removeItem("gemini_api_key_new"); setHasKey(false); setApiKey(""); }} className="p-2 text-slate-400"><i data-lucide="log-out" className="w-4 h-4"></i></button>
                     </header>
                     <main className="flex-1 overflow-y-auto bg-slate-900 relative">
                         {activeTab === "chat" && (
@@ -165,7 +179,7 @@
                                             </div>
                                         </div>
                                     ))}
-                                    {isLoading && <div className="p-4 text-xs text-slate-500">...</div>}
+                                    {isLoading && <div className="p-4 text-xs text-slate-500">Thinking...</div>}
                                     <div ref={messagesEndRef} />
                                 </div>
                                 <div className="p-3 bg-slate-900 border-t border-slate-800 sticky bottom-0">
@@ -179,13 +193,13 @@
                                 </div>
                             </div>
                         )}
-                        {activeTab === "calendar" && <div className="p-10 text-center text-slate-500">カレンダー</div>}
-                        {activeTab === "journal" && <div className="p-4 pb-20 overflow-y-auto h-full"><h2 className="text-xl font-bold mb-4">日記</h2>{diaries.map(d=><div key={d.id} className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4"><h3 className="font-bold">{d.title}</h3><p className="text-sm text-slate-300">{d.summary}</p></div>)}</div>}
+                        {activeTab === "calendar" && <div className="p-10 text-center text-slate-500">カレンダー機能は準備中です</div>}
+                        {activeTab === "journal" && <div className="p-4 pb-20 overflow-y-auto h-full"><h2 className="text-xl font-bold mb-4">日記</h2>{diaries.length===0?<p className="text-slate-500">まだ日記がありません</p>:diaries.map(d=><div key={d.id} className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-4"><h3 className="font-bold text-teal-400">{d.title}</h3><p className="text-sm text-slate-300 mt-2">{d.summary}</p></div>)}</div>}
                     </main>
                     <nav className="bg-slate-900 border-t border-slate-800 pb-10 h-16 flex justify-around items-center z-20">
-                        <button onClick={() => setActiveTab("chat")} className="flex flex-col items-center w-16 text-teal-400"><i data-lucide="message-circle" className="w-6 h-6"></i></button>
-                        <button onClick={() => setActiveTab("calendar")} className="flex flex-col items-center w-16 text-slate-500"><i data-lucide="calendar" className="w-6 h-6"></i></button>
-                        <button onClick={() => setActiveTab("journal")} className="flex flex-col items-center w-16 text-slate-500"><i data-lucide="book" className="w-6 h-6"></i></button>
+                        <button onClick={() => setActiveTab("chat")} className={`flex flex-col items-center w-16 ${activeTab==='chat'?'text-teal-400':'text-slate-500'}`}><i data-lucide="message-circle" className="w-6 h-6"></i></button>
+                        <button onClick={() => setActiveTab("calendar")} className={`flex flex-col items-center w-16 ${activeTab==='calendar'?'text-teal-400':'text-slate-500'}`}><i data-lucide="calendar" className="w-6 h-6"></i></button>
+                        <button onClick={() => setActiveTab("journal")} className={`flex flex-col items-center w-16 ${activeTab==='journal'?'text-teal-400':'text-slate-500'}`}><i data-lucide="book" className="w-6 h-6"></i></button>
                     </nav>
                 </div>
             );
